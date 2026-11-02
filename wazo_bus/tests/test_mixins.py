@@ -7,7 +7,7 @@ from time import monotonic
 from unittest import TestCase
 from unittest.mock import Mock, patch
 
-from amqp.exceptions import NotFound
+from amqp.exceptions import AccessRefused, NotFound
 from hamcrest import (
     assert_that,
     empty,
@@ -183,6 +183,39 @@ class TestUpstreamBindings(TestCase):
         self.consumer.get_consumers(Mock(), Mock())
 
         assert_that(self.consumer._ConsumerMixin__queue.bindings, empty())
+
+    def test_a_binding_never_attempted_is_not_failing(self):
+        assert_that(self.consumer.consumer_bindings_failing(), equal_to(False))
+
+    def test_a_failed_upstream_binding_is_failing_until_bound(self):
+        self.tick(NotFound('no exchange'))
+        assert_that(self.consumer.consumer_bindings_failing(), equal_to(True))
+
+        with patch.object(Binding, 'bind'):
+            self.consumer.on_iteration()
+        assert_that(self.consumer.consumer_bindings_failing(), equal_to(False))
+
+    def test_a_failed_upstream_binding_no_longer_wanted_is_not_failing(self):
+        self.tick(NotFound('no exchange'))
+
+        self.consumer.unsubscribe('some_event', self.handler)
+
+        assert_that(self.consumer.consumer_bindings_failing(), equal_to(False))
+
+    def test_a_failed_queue_binding_is_failing_until_bound(self):
+        self.consumer.connection.channel_errors = (NotFound, AccessRefused)
+
+        def bind_failing_queue(entity, channel=None):
+            if not isinstance(entity, Exchange):
+                raise AccessRefused('refused')
+
+        with patch.object(Binding, 'bind', side_effect=bind_failing_queue):
+            self.consumer.on_iteration()
+        assert_that(self.consumer.consumer_bindings_failing(), equal_to(True))
+
+        with patch.object(Binding, 'bind'):
+            self.consumer.on_iteration()
+        assert_that(self.consumer.consumer_bindings_failing(), equal_to(False))
 
 
 class TestUpstreamExchange(TestCase):

@@ -147,6 +147,7 @@ class TestUpstream(BusIntegrationTest):
         self.subscribe(event.name)
 
         assert_that(self.consumer.wait_synchronized(timeout=1.0), is_(False))
+        assert_that(self.consumer.consumer_bindings_failing(), is_(True))
 
         url = f'amqp://guest:guest@127.0.0.1:{self.service_port(5672, "rabbitmq")}//'
         upstream = Exchange(MISSING_UPSTREAM_EXCHANGE_NAME, 'headers', durable=True)
@@ -154,6 +155,7 @@ class TestUpstream(BusIntegrationTest):
             upstream(connection.default_channel).declare()
         try:
             assert_that(self.consumer.wait_synchronized(), is_(True))
+            assert_that(self.consumer.consumer_bindings_failing(), is_(False))
 
             publisher = BusPublisher(
                 service_uuid=str(uuid4()),

@@ -187,6 +187,8 @@ class ConsumerMixin(KombuConsumer, BaseProtocol):
     Public methods:
         * `consumer_connected`:
             Returns whether the consumer is connected to RabbitMQ or not
+        * `consumer_bindings_failing`:
+            Returns whether a pending binding failed its last attempt
         * `subscribe`:
             Install a handler for the specified event
         * `unsubscribe`:
@@ -212,6 +214,7 @@ class ConsumerMixin(KombuConsumer, BaseProtocol):
         super().__init__(**kwargs)  # type: ignore[safe-super]
         self.__subscriptions: dict[str, list[Subscription]] = {}
         self.__bindings: set[Binding] = set()
+        self.__failed_bindings: set[Binding] = set()
         self.__upstream = UpstreamBindings(upstream_exchange_name, self.log)
         self.__queue: AMQPQueue | None = None
         self.__lock = Lock()
@@ -228,6 +231,15 @@ class ConsumerMixin(KombuConsumer, BaseProtocol):
     def consumer_connected(self) -> bool:
         is_running = self.__thread.is_alive() if self.__thread is not None else True
         return bool(is_running and self.connection.connected)
+
+    def consumer_bindings_failing(self) -> bool:
+        with self.__synced:
+            if self.__upstream.is_failing():
+                return True
+            if self.__queue is None:
+                return False
+            pending = self.__bindings ^ self.__queue.bindings
+            return bool(self.__failed_bindings & pending)
 
     def __is_synced(self) -> bool:
         if self.__queue is None:
@@ -274,7 +286,12 @@ class ConsumerMixin(KombuConsumer, BaseProtocol):
                 errors,
             )
             with self.__synced:
-                self.__upstream.commit(upstream_added, upstream_removed)
+                self.__upstream.commit(
+                    upstream_to_add,
+                    upstream_to_remove,
+                    upstream_added,
+                    upstream_removed,
+                )
 
         with self.__synced:
             to_add = self.__deliverable(to_add)
@@ -356,6 +373,7 @@ class ConsumerMixin(KombuConsumer, BaseProtocol):
         with self.__synced:
             self.__queue.bindings |= added
             self.__queue.bindings -= removed
+            self.__failed_bindings = (to_add - added) | (to_remove - removed)
 
     def __dispatch(
         self, event_name: str, payload: dict, headers: dict | None = None
@@ -457,6 +475,7 @@ class ConsumerMixin(KombuConsumer, BaseProtocol):
     ) -> list[Consumer]:
         with self.__synced:
             self.__upstream.reset()
+            self.__failed_bindings = set()
             self.__queue = AMQPQueue(
                 name=f'{self._name}.{os.urandom(3).hex()}',
                 exclusive=True,

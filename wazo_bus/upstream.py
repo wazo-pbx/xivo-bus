@@ -26,6 +26,7 @@ class UpstreamBindings:
         self._log = log
         self._binding_by_event: dict[str, Binding] = {}
         self._live: set[Binding] = set()
+        self._failed: set[Binding] = set()
         self._last_error: str | None = None
 
     def add(self, event_name: str) -> None:
@@ -41,6 +42,7 @@ class UpstreamBindings:
 
     def reset(self) -> None:
         self._live = set()
+        self._failed = set()
 
     def is_live(self, event_name: str) -> bool:
         if self._exchange is None:
@@ -49,6 +51,10 @@ class UpstreamBindings:
 
     def is_synced(self) -> bool:
         return self._live == set(self._binding_by_event.values())
+
+    def is_failing(self) -> bool:
+        to_add, to_remove = self.changes()
+        return bool(self._failed & (to_add | to_remove))
 
     def changes(self) -> tuple[set[Binding], set[Binding]]:
         desired = set(self._binding_by_event.values())
@@ -100,6 +106,13 @@ class UpstreamBindings:
 
         return added, removed
 
-    def commit(self, added: set[Binding], removed: set[Binding]) -> None:
+    def commit(
+        self,
+        to_add: set[Binding],
+        to_remove: set[Binding],
+        added: set[Binding],
+        removed: set[Binding],
+    ) -> None:
         self._live |= added
         self._live -= removed
+        self._failed = (to_add - added) | (to_remove - removed)
