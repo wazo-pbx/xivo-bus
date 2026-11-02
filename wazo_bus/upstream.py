@@ -42,6 +42,11 @@ class UpstreamBindings:
     def reset(self) -> None:
         self._live = set()
 
+    def is_live(self, event_name: str) -> bool:
+        if self._exchange is None:
+            return True
+        return self._binding_by_event.get(event_name) in self._live
+
     def is_synced(self) -> bool:
         return self._live == set(self._binding_by_event.values())
 

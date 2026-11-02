@@ -10,8 +10,10 @@ from unittest.mock import Mock, patch
 from amqp.exceptions import NotFound
 from hamcrest import (
     assert_that,
+    empty,
     equal_to,
     has_item,
+    has_length,
     is_not,
     less_than,
     same_instance,
@@ -153,6 +155,36 @@ class TestUpstreamBindings(TestCase):
         assert_that(calls, equal_to(['bind', 'unbind', 'bind']))
         assert_that(self.consumer.wait_synchronized(timeout=0), equal_to(True))
 
+    def test_a_queue_binding_waits_for_its_upstream_binding(self):
+        bound = []
+
+        def bind_failing_upstream(entity, channel=None):
+            if isinstance(entity, Exchange):
+                raise NotFound('no exchange')
+            bound.append(entity)
+
+        def bind(entity, channel=None):
+            bound.append(entity)
+
+        with patch.object(Binding, 'bind', side_effect=bind_failing_upstream):
+            self.consumer.on_iteration()
+        assert_that(bound, empty())
+        assert_that(self.consumer.wait_synchronized(timeout=0), equal_to(False))
+
+        with patch.object(Binding, 'bind', side_effect=bind):
+            self.consumer.on_iteration()
+        upstream_first = [isinstance(entity, Exchange) for entity in bound]
+        assert_that(upstream_first, equal_to([True, False]))
+        assert_that(self.consumer.wait_synchronized(timeout=0), equal_to(True))
+
+    def test_a_reconnection_declares_the_queue_without_bindings(self):
+        with patch.object(Binding, 'bind'):
+            self.consumer.on_iteration()
+
+        self.consumer.get_consumers(Mock(), Mock())
+
+        assert_that(self.consumer._ConsumerMixin__queue.bindings, empty())
+
 
 class TestUpstreamExchange(TestCase):
     def make_consumer(self, **kwargs):
@@ -188,3 +220,11 @@ class TestUpstreamExchange(TestCase):
             self.declared(consumer),
             equal_to({'auto_delete': False, 'durable': True}),
         )
+
+    def test_the_queue_is_declared_with_its_bindings_without_an_upstream(self):
+        consumer = self.make_consumer()
+        consumer.subscribe('some_event', Mock())
+
+        consumer.get_consumers(Mock(), Mock())
+
+        assert_that(consumer._ConsumerMixin__queue.bindings, has_length(1))

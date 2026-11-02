@@ -181,7 +181,8 @@ class ConsumerMixin(KombuConsumer, BaseProtocol):
     With `upstream_exchange_name`, the consuming exchange is declared
     transient and auto-delete and bound to that (never declared) headers upstream exchange
     once per subscribed event name, and those bindings are reconciled the same
-    way.
+    way. A queue binding goes live only once its event's upstream binding is
+    live, so a live queue binding means its events can be delivered.
 
     Public methods:
         * `consumer_connected`:
@@ -275,6 +276,9 @@ class ConsumerMixin(KombuConsumer, BaseProtocol):
             with self.__synced:
                 self.__upstream.commit(upstream_added, upstream_removed)
 
+        with self.__synced:
+            to_add = self.__deliverable(to_add)
+
         if to_add or to_remove:
             self.__apply_binding_changes(to_add, to_remove)
 
@@ -285,6 +289,13 @@ class ConsumerMixin(KombuConsumer, BaseProtocol):
                 or upstream_removed
             ):
                 self.__synced.notify_all()
+
+    def __deliverable(self, bindings: set[Binding]) -> set[Binding]:
+        return {
+            binding
+            for binding in bindings
+            if self.__upstream.is_live(binding.arguments['name'])
+        }
 
     @contextmanager
     def __open_channel(self) -> Iterator[StdChannel]:
@@ -445,14 +456,14 @@ class ConsumerMixin(KombuConsumer, BaseProtocol):
         self, Consumer: type[Consumer], channel: StdChannel
     ) -> list[Consumer]:
         with self.__synced:
+            self.__upstream.reset()
             self.__queue = AMQPQueue(
                 name=f'{self._name}.{os.urandom(3).hex()}',
                 exclusive=True,
                 auto_delete=True,
                 durable=False,
-                bindings=set(self.__bindings),
+                bindings=self.__deliverable(self.__bindings),
             )
-            self.__upstream.reset()
 
         self._exchange.bind(channel).declare()
         return [
