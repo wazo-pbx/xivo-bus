@@ -68,14 +68,15 @@ class UpstreamBindings:
 
         # NOTE: removals first: a resubscribed event's binding has the same arguments
         try:
-            for binding in to_remove:
+            if to_remove:
                 try:
                     with open_channel() as channel:
-                        binding.unbind(destination, channel=channel)
+                        for binding in to_remove:
+                            binding.unbind(destination, channel=channel)
+                            removed.add(binding)
                 except NotFound:
-                    # NOTE: a missing exchange holds no binding; NotFound closed the channel
-                    pass
-                removed.add(binding)
+                    # NOTE: only a missing exchange raises it, and that exchange holds no binding
+                    removed = set(to_remove)
             if to_add:
                 with open_channel() as channel:
                     destination.bind(channel).declare()

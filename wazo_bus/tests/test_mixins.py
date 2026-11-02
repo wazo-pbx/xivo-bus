@@ -63,7 +63,7 @@ class TestUpstreamBindings(TestCase):
             ),
         )
 
-    def test_an_unbind_not_found_counts_as_removed_without_ending_the_batch(self):
+    def test_an_unbind_not_found_counts_every_removal_as_done(self):
         other_handler = Mock()
         self.consumer.subscribe('other_event', other_handler)
         with patch.object(Binding, 'bind'):
@@ -88,10 +88,9 @@ class TestUpstreamBindings(TestCase):
             with patch.object(Binding, 'bind', side_effect=bind):
                 self.consumer.on_iteration()
 
-        assert_that([name for name, _ in calls], equal_to(['unbind', 'unbind', 'bind']))
+        assert_that([name for name, _ in calls], equal_to(['unbind', 'bind']))
         failed_channel = calls[0][1]
         assert_that(calls[1][1], is_not(same_instance(failed_channel)))
-        assert_that(calls[2][1], is_not(same_instance(failed_channel)))
         assert_that(failed_channel.exchange_declare.called, equal_to(False))
         assert_that(self.consumer.wait_synchronized(timeout=0), equal_to(True))
 
